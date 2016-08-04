@@ -48,13 +48,13 @@ def process_msgid_msgstr(string)
 end
 
 
-def iterate(hash, fhash={}, path='', outfile=$stdout)
+def iterate(hash, outfile = $stdout, fhash = {}, path = '')
   postr = ''
   hash.each {|key, val|
     fhash[key] = {} unless fhash.has_key? key
     if val.is_a? Hash
       fhash[key] = {} unless fhash[key].is_a? Hash
-      iterate(val, fhash[key], path+key+':', outfile)
+      iterate(val, outfile, fhash[key], "#{path}#{key}:")
     elsif val.nil?
       $stderr.puts("Warning: Empty key #{path}#{key}")
     else
@@ -69,7 +69,7 @@ def iterate(hash, fhash={}, path='', outfile=$stdout)
 end
 
 
-def print_header(lang='LANGUAGE', outfile=$stdout)
+def print_header(outfile = $stdout, lang = 'LANGUAGE')
   outfile.puts('# SOME DESCRIPTIVE TITLE.')
   outfile.puts('# Copyright (C) YEAR THE PACKAGE\'S COPYRIGHT HOLDER')
   outfile.puts('# This file is distributed under the same license as the PACKAGE package.')
@@ -103,63 +103,115 @@ def print_header(lang='LANGUAGE', outfile=$stdout)
 end
 
 
-def generate_pot(engfilename, outfilename)
-  if File.exists? engfilename
-    engfile = YAML::load_file(engfilename)
-    outfile = File.new(outfilename, 'w')
-    print_header('LANGUAGE', outfile)
-    iterate(engfile['en'], {}, '', outfile)
+def generate_pot(opts = {})
+  return false unless opts[:output_file] and opts[:input_file] and opts[:ref_lang]
+
+  unless File.exists? opts[:input_file]
+    $stderr.puts("Error: Specified YAML file #{opts[:input_file]} does not exist.")
+    return false
+  end
+
+  engfile = YAML::load_file(opts[:input_file])
+  if opts[:output_file] == :stdout
+    print_header
+    iterate(engfile[opts[:ref_lang]])
+  else
+    outfile = File.new(opts[:output_file], 'w')
+    print_header(outfile)
+    iterate(engfile[opts[:ref_lang]], outfile)
     outfile.close()
+  end
+
+  return true
+end
+
+
+def lang2po(opts = {})
+  return false unless opts[:output_file] and opts[:input_file] and opts[:ref_file] and opts[:lang] and opts[:ref_lang]
+
+  unless File.exists? opts[:ref_file]
+    $stderr.puts("Error: Specified YAML file #{opts[:ref_file]} does not exist.")
+    return false
+  end
+
+  unless File.exists? opts[:input_file]
+    $stderr.puts("Error: Specified YAML file #{opts[:input_file]} does not exist.")
+    return false
+  end
+
+  # Generate the PO file only once checked that both files exist
+  engfile = YAML::load_file(opts[:ref_file])
+  langfile = YAML::load_file(opts[:input_file])
+
+  if opts[:output_file] == :stdout
+    outfile = $stdout
   else
-    $stderr.puts("Error: Specified YAML file #{engfilename} does not exist.")
+    outfile = File.new(opts[:output_file], 'w')
+  end
+
+  print_header(outfile, opts[:lang])
+  iterate(engfile[opts[:ref_lang]], outfile, langfile[opts[:lang]])
+
+  outfile.close() unless opts[:output_file] == :stdout
+
+  return true
+end
+
+
+options = {
+  :create_pot => false,
+  :input_file => nil,
+  :ref_file => nil,
+  :output_file => :stdout
+}
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage:\n      yaml2po -h\n      yaml2po -P source.yml [-o output.pot]\n      yaml2po [-l ref_lang] -L dest_lang [-o file.po] ref_file.yml source_file.yml\n\n"
+
+  opts.on('-P', '--create-pot SOURCE_FILE', 'Source yaml file to create a master .pot file') do |o|
+    options[:create_pot] = true
+    options[:input_file] = o
+  end
+
+  opts.on('-l', '--ref_lang [LANG]', 'Source language code') do |l|
+    options[:create_pot] = false
+    options[:ref_lang] = l || 'en'
+  end
+
+  opts.on('-L', '--lang LANG', 'Destination language code') do |l|
+    options[:create_pot] = false
+    options[:lang] = l
+  end
+
+  opts.on('-o', '--output [FILE]', 'Output file') do |o|
+    options[:output_file] = o
+  end
+
+  # No argument, shows at tail.  This will print an options summary.
+  # Try it and see!
+  opts.on_tail('-h', '--help', 'Show this message') do
+    puts opts
+    exit
+  end
+
+end
+
+opt_parser.parse!
+
+unless options[:create_pot]
+  if ARGV[0] and ARGV[1]
+    options[:ref_file] = ARGV[0]
+    options[:input_file] = ARGV[1]
   end
 end
 
-
-def lang2po(lang, engfilename, langfilename, outfilename)
-  if File.exists? engfilename
-    if File.exists? langfilename
-      # Generate the PO file only once checked that both files exist
-      engfile = YAML::load_file(engfilename)
-      langfile = YAML::load_file(langfilename)
-      outfile = File.new(outfilename, 'w')
-      print_header(lang, outfile)
-      iterate(engfile['en'], langfile[lang], '', outfile)
-      outfile.close()
-    else
-      $stderr.puts("Error: Specified YAML file #{langfilename} does not exist.")
-    end
-  else
-    $stderr.puts("Error: Specified YAML file #{engfilename} does not exist.")
-  end
-end
-
-
-def print_usage()
-  puts("\nUsage:\n")
-  puts("  - To create a 'master' .pot\n")
-  puts("    yaml2po -P en.yml file.pot\n")
-  puts("\n")
-  puts("  - To create a language's .po\n")
-  puts("    yaml2po -l de -t en.yml de.yml de.po\n\n")
-end
-
-
-
-opt = ARGV[0]
-
-if opt == '-P'
+if options[:create_pot]
   # Goes this way when generating a POT file
-  if (ARGV.size == 3)
-    generate_pot(ARGV[1], ARGV[2])
-    exit
-  end
-elsif opt == '-l'
+  exit if generate_pot(options)
+
+else
   # Goes this way when generating a PO file with the translation for a given language
-  if (ARGV.size == 6)
-    lang2po(ARGV[1], ARGV[3], ARGV[4], ARGV[5])
-    exit
-  end
+  exit if lang2po(options)
 end
 
-print_usage()
+$stderr.puts opt_parser.help
+exit 1
